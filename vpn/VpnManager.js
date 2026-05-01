@@ -427,11 +427,13 @@ class VpnManager {
     };
   }
 
-  async killClient(addr) {
-    if (!addr) return;
-    const cmd = `echo "kill ${addr}" | nc -w 5 -q 2 localhost 5194`;
+  // OpenVPN management interface "kill" accepts either a common name (kills
+  // all sessions for that CN) or a host:port (kills the specific connection).
+  async killClient(cnOrAddr) {
+    if (!cnOrAddr) return;
+    const cmd = `echo "kill ${cnOrAddr}" | nc -w 5 -q 2 localhost 5194`;
     await execAsync(cmd).catch((err) => {
-      log.warn(`Failed to kill client with address ${addr}`, err);
+      log.warn(`Failed to kill client ${cnOrAddr}`, err);
     });
   }
 
@@ -886,6 +888,12 @@ class VpnManager {
     await execAsync(cmd).catch((err) => {
       log.error("Failed to revoke VPN profile " + commonName, err);
     });
+    // Disconnect any active sessions for this CN. CRL revocation alone does not
+    // tear down established tunnels (OpenVPN does not re-check the CRL for
+    // already-connected clients), so without this the peer keeps passing traffic
+    // until renegotiation/timeout. Killing by CN handles the case where a single
+    // profile has multiple concurrent connections.
+    await new VpnManager().killClient(commonName);
     const event = {
       type: Message.MSG_OVPN_PROFILES_UPDATED,
       cn: commonName
